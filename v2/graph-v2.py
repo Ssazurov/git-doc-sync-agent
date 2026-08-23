@@ -49,30 +49,26 @@ def initial_state(**overrides: Any) -> AgentState:
 # --- НОДЫ ГРАФА (ИИ-АГЕНТЫ) ---
 
 async def node_ast_detect(state: AgentState) -> Dict[str, Any]:
-    """Нода 1 (AST-Detective): парсит код и находит измененные методы"""
+    """Нода 1 (AST-Detective): детерминированная обёртка над detector.py/extractors.py.
+
+    Без LLM: сканирует кодовую базу (AST — для Python через detector.py,
+    tree-sitter — для остальных языков через extractors.py) и кладёт полный
+    список найденных методов ("diff") в state графа. Никакой генерации
+    текста и обращений к LLM на этом шаге."""
     print("[Node 1]: AST-Detective сканирует кодовую базу...")
     detector = DocSyncDetector()
     code_methods = detector.scan_codebase()
 
-    changed = []
-    for sig, data in code_methods.items():
-        changed.append({
+    changed = [
+        {
             "signature": sig,
             "file": data["file"],
             "name": data["name"],
             "lineno": data["lineno"],
             "docstring": data["docstring"],
-        })
-        break
-
-    if not changed:
-        changed = [{
-            "signature": "app.py::start_server",
-            "file": "app.py",
-            "name": "start_server",
-            "lineno": 10,
-            "docstring": "Инициализирует и запускает Streamlit-сервер веб-интерфейса.",
-        }]
+        }
+        for sig, data in code_methods.items()
+    ]
 
     return {"changed_methods": changed, "current_step": "ast_detect"}
 

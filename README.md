@@ -1,10 +1,11 @@
 # git-doc-sync-agent 🤖📚
 
 **Doc-as-Code copilot**, который следит, чтобы техническая документация не
-расходилась с кодом. Разбирает Python-код через AST, сверяет со связями
-`code_ref` в XML/DocBook-документации, находит устаревшие разделы и
-недокументированный код, а по команде техписателя сам заводит GitHub Issue
-или открывает Pull Request с TODO-разметкой.
+расходилась с кодом. Разбирает код (Python, C, C++, JavaScript, TypeScript,
+Go, Java, Rust) через AST/tree-sitter, сверяет со связями `code_ref` в
+XML/DocBook-документации, находит устаревшие разделы и недокументированный
+код, а по команде техписателя сам заводит GitHub Issue или открывает Pull
+Request с TODO-разметкой.
 
 Никакого «магического» LLM-агента, который тихо правит документацию за
 человека: детерминированный анализ (AST + XPath) даёт список фактов,
@@ -24,8 +25,8 @@ Ollama-эмбеддинги — необязательная подсказка 
 
 ```mermaid
 flowchart TD
-    A[Запуск detector.py<br/>push / PR / вручную] --> B[AST-сканер кода<br/>ast.walk по .py]
-    B --> C[Индекс методов<br/>file.py::method_name]
+    A[Запуск detector.py<br/>push / PR / вручную] --> B[Сканер кода<br/>ast: .py · tree-sitter: .c/.cpp/.js/.ts/.go/.java/.rs]
+    B --> C[Индекс методов<br/>file.ext::method_name]
     A --> D[XML-сканер docs/*.xml<br/>lxml XPath //section@code_ref]
     D --> E[Список привязок code_ref]
     C --> F{analyze_sync}
@@ -40,7 +41,7 @@ flowchart TD
     L --> M["Действия техписателя:<br/>создать Issue / открыть PR с TODO"]
 ```
 
-1. `detector.py` парсит код через `ast` и документацию через `lxml` независимо друг от друга.
+1. `detector.py` парсит код (`ast` для Python, `tree-sitter` для C/C++/JS/TS/Go/Java/Rust — модуль `extractors.py`) и документацию через `lxml` независимо друг от друга.
 2. Раздел с `code_ref="file.py::method"` считается **stale**, если такого метода уже нет в коде.
 3. Метод без обратной ссылки из XML попадает в **undocumented** — для него ищется семантически похожий раздел (эмбеддинги Ollama, при недоступности — пересечение слов, порог 35%).
 4. Результат пишется в `sync_state.json` и рендерится в Streamlit-портале.
@@ -61,7 +62,8 @@ flowchart TD
 
 | Файл | Роль |
 |---|---|
-| `detector.py` | AST-сканер кода + XPath-сканер XML, вычисляет stale/undocumented, сохраняет `sync_state.json` |
+| `detector.py` | Сканер кода (ast + tree-sitter) + XPath-сканер XML, вычисляет stale/undocumented, сохраняет `sync_state.json` |
+| `extractors.py` | tree-sitter-извлечение функций/методов для C/C++/JS/TS/Go/Java/Rust |
 | `streamlit_app.py` | Портал техписателя: статусы разделов, метрики, кнопки действий |
 | `github_reporter.py` | Создаёт GitHub Issue по устаревшему разделу (PyGithub) |
 | `git_pr_manager.py` | Создаёт ветку, вставляет TODO в XML, открывает PR — через GitHub Contents/Git API |
@@ -71,9 +73,26 @@ flowchart TD
 
 ## Технологии
 
-`Python 3.10+` · `ast` (stdlib) · `lxml` (XPath) · `httpx` (async) ·
-`Ollama` (embeddings, опционально) · `Streamlit` · `PyGithub` ·
-`GitHub Actions`
+`Python 3.10+` · `ast` (stdlib, для Python) · `tree-sitter` +
+`tree-sitter-language-pack` (для C/C++/JS/TS/Go/Java/Rust) ·
+`lxml` (XPath) · `httpx` (async) · `Ollama` (embeddings, опционально) ·
+`Streamlit` · `PyGithub` · `GitHub Actions`
+
+## Поддерживаемые языки кода
+
+| Язык | Расширения | Парсер |
+|---|---|---|
+| Python | `.py` | `ast` (stdlib) |
+| C | `.c`, `.h` | tree-sitter |
+| C++ | `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh` | tree-sitter |
+| JavaScript | `.js`, `.jsx` | tree-sitter |
+| TypeScript | `.ts`, `.tsx` | tree-sitter |
+| Go | `.go` | tree-sitter |
+| Java | `.java` | tree-sitter |
+| Rust | `.rs` | tree-sitter |
+
+Для не-Python языков вместо docstring используется блок комментариев
+непосредственно перед функцией/методом (`//`, `/** */`).
 
 ## Установка и запуск
 
