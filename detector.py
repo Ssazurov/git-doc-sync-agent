@@ -2,6 +2,7 @@ import os
 import ast
 import re
 import json
+import asyncio
 import httpx
 from lxml import etree
 import config
@@ -183,3 +184,26 @@ class DocSyncDetector:
             json.dump(report, f, indent=4, ensure_ascii=False)
             
         return report
+
+
+def main():
+    """CLI-точка входа: запускает полный анализ синхронизации и печатает
+    краткую сводку. Используется локально и в CI (doc_sync_check.yml)."""
+    detector = DocSyncDetector()
+    report = asyncio.run(detector.analyze_sync())
+
+    print(f"[detector] Методов в коде: {report['total_code_methods']}")
+    print(f"[detector] Привязок в доках: {report['total_documented_bindings']}")
+    print(f"[detector] Устаревших разделов (stale): {len(report['stale_bindings'])}")
+    print(f"[detector] Недокументированных методов: {len(report['undocumented_methods'])}")
+
+    for item in report["stale_bindings"]:
+        b = item["binding"]
+        print(f"  [STALE] {b['doc_file']}#{b['section_id']} -> {b['code_ref']}")
+    # Примечание: detector.py — self-monitoring демо на своих же docs/*.xml,
+    # там намеренно есть stale-разделы (см. Issue #1). Поэтому здесь не
+    # завершаем процесс ненулевым кодом — CI только публикует отчёт.
+
+
+if __name__ == "__main__":
+    main()
