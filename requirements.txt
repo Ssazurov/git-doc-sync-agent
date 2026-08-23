@@ -6,3 +6,4 @@ streamlit
 PyGithub
 tree-sitter
 tree-sitter-language-pack
+pytest

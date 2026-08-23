@@ -12,6 +12,13 @@ from detector import DocSyncDetector
 from agents import ASTDetectiveAgent, XMLNavigatorAgent, DraftingAssistantAgent, DevOpsCoordinatorAgent
 from git_pr_manager import GitPRManager
 
+# Пороги классификации XML-Navigator (node_xml_navigate) для недокументированных
+# методов: >= NEW_SECTION_THRESHOLD — уверенная автопривязка (new_section);
+# [SKIP_THRESHOLD, NEW_SECTION_THRESHOLD) — нужен LLM-обзор (review);
+# < SKIP_THRESHOLD — вероятно helper-метод, документация не требуется (skip).
+NEW_SECTION_THRESHOLD = 0.7
+SKIP_THRESHOLD = 0.35
+
 
 # --- СОСТОЯНИЕ ГРАФА (реальный LangGraph StateGraph) ---
 class AgentState(TypedDict, total=False):
@@ -77,11 +84,13 @@ async def node_xml_navigate(state: AgentState) -> Dict[str, Any]:
     (та же логика, что в DocSyncDetector.scan_all_docs()).
 
     Без LLM: 1) изменённые методы, уже привязанные к <section code_ref=...>,
-    помечаются как stale_bindings (нужно обновить XML). 2) Изменённые методы
-    без привязки сопоставляются с заголовками разделов через косинусное
-    сходство эмбеддингов (detector.calculate_semantic_similarity); если лучший
-    результат <70%, выставляется needs_llm_review=True — сигнал для
-    Drafting-Assistant, что нужен LLM, а не автопривязка."""
+    помечаются как stale_bindings (нужно обновить XML, need_update). 2)
+    Изменённые методы без привязки сопоставляются с заголовками разделов
+    через косинусное сходство эмбеддингов (detector.calculate_semantic_similarity)
+    и получают classification: "new_section" (score >= NEW_SECTION_THRESHOLD —
+    уверенная автопривязка), "review" (SKIP_THRESHOLD <= score < NEW_SECTION_THRESHOLD,
+    needs_llm_review=True — сигнал для Drafting-Assistant), "skip" (score <
+    SKIP_THRESHOLD — вероятно helper-метод, не требующий документации)."""
     print("[Node 2]: XML-Navigator сопоставляет код с документацией...")
     detector = DocSyncDetector()
     bindings = detector.scan_all_docs()
@@ -113,7 +122,15 @@ async def node_xml_navigate(state: AgentState) -> Dict[str, Any]:
                 best_score = score
                 best_binding = binding
 
-        item_needs_review = best_score < 0.7
+        if best_score >= NEW_SECTION_THRESHOLD:
+            classification = "new_section"
+            item_needs_review = False
+        elif best_score >= SKIP_THRESHOLD:
+            classification = "review"
+            item_needs_review = True
+        else:
+            classification = "skip"
+            item_needs_review = False
         needs_llm_review = needs_llm_review or item_needs_review
 
         new_code_methods.append({
@@ -123,6 +140,7 @@ async def node_xml_navigate(state: AgentState) -> Dict[str, Any]:
             "suggested_binding": best_binding,
             "match_score": best_score,
             "needs_llm_review": item_needs_review,
+            "classification": classification,
         })
 
     return {
