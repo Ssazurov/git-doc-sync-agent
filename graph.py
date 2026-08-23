@@ -28,10 +28,6 @@ class AgentState(TypedDict, total=False):
     current_step: str
 
 
-# Обратная совместимость с v1-именованием, использовавшимся в streamlit-приложении
-GraphState = AgentState
-
-
 def initial_state(**overrides: Any) -> AgentState:
     state: AgentState = {
         "commit_hash": "a1b2c3",
@@ -77,7 +73,8 @@ async def node_ast_detect(state: AgentState) -> Dict[str, Any]:
 
 
 async def node_xml_navigate(state: AgentState) -> Dict[str, Any]:
-    """Нода 2 (XML-Navigator): детерминированное сопоставление по code_ref (как в v1).
+    """Нода 2 (XML-Navigator): детерминированное сопоставление по code_ref
+    (та же логика, что в DocSyncDetector.scan_all_docs()).
 
     Без LLM: 1) изменённые методы, уже привязанные к <section code_ref=...>,
     помечаются как stale_bindings (нужно обновить XML). 2) Изменённые методы

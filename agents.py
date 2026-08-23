@@ -1,6 +1,6 @@
 """
-agents.py — ИИ-агенты Doc-as-Code Copilot v2 поверх LangGraph StateGraph
-(см. graph.py). Базовый AIAgent + 4 роли; DraftingAssistantAgent
+agents.py — мультиагентная надстройка Doc-as-Code Copilot поверх LangGraph
+StateGraph (см. graph.py). Базовый AIAgent + 4 роли; DraftingAssistantAgent
 реализует Issue #9 — реальный вызов Ollama/Qwen2.5 со structured output.
 """
 import json
