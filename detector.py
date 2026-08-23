@@ -6,6 +6,7 @@ import asyncio
 import httpx
 from lxml import etree
 import config
+import extractors
 
 class DocSyncDetector:
     """
@@ -42,23 +43,34 @@ class DocSyncDetector:
         return methods
 
     def scan_codebase(self) -> dict[str, dict]:
-        """Сканирует всю папку с кодом и индексирует методы"""
+        """Сканирует папку с кодом (Python/C/C++/JS/TS/Go/Java/Rust) и индексирует методы"""
         all_methods = {}
-        EXCLUDE_DIRS = {".venv", "venv", "__pycache__", ".git", "node_modules", ".idea", ".pytest_cache", "db"}
+        EXCLUDE_DIRS = {
+            ".venv", "venv", "__pycache__", ".git", "node_modules", ".idea",
+            ".pytest_cache", "db", "target", "build", "dist", "vendor",
+        }
         for root, dirs, files in os.walk(self.codes_dir):
             dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
             for file in files:
-                if file.endswith(".py") and not file.startswith("test_") and file != "config.py":
-                    path = os.path.join(root, file)
-                    rel_path = os.path.relpath(path, self.codes_dir)
-                    for method in self.extract_python_methods(path):
-                        sig = f"{rel_path}::{method['name']}"
-                        all_methods[sig] = {
-                            "file": rel_path,
-                            "name": method["name"],
-                            "lineno": method["lineno"],
-                            "docstring": method["docstring"]
-                        }
+                ext = os.path.splitext(file)[1]
+                if ext not in extractors.SUPPORTED_EXTENSIONS:
+                    continue
+                if file.startswith("test_") or file == "config.py":
+                    continue
+                path = os.path.join(root, file)
+                rel_path = os.path.relpath(path, self.codes_dir)
+                methods = (
+                    self.extract_python_methods(path) if ext == ".py"
+                    else extractors.extract_methods(path)
+                )
+                for method in methods:
+                    sig = f"{rel_path}::{method['name']}"
+                    all_methods[sig] = {
+                        "file": rel_path,
+                        "name": method["name"],
+                        "lineno": method["lineno"],
+                        "docstring": method["docstring"]
+                    }
         return all_methods
 
     def scan_docbook_xml(self, filepath: str) -> list[dict]:
