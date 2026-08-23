@@ -45,9 +45,10 @@ class GitPRManager:
             f"из путей {self._candidate_paths(doc_file)}: {last_err}"
         )
 
-    def create_todo_pr(self, binding: dict) -> str:
-        """Создаёт ветку, вставляет TODO перед устаревшим <section>,
-        коммитит и открывает PR. Возвращает URL PR."""
+    def create_todo_pr(self, binding: dict, draft_text: str | None = None) -> str:
+        """Создаёт ветку, вставляет перед устаревшим <section> либо готовый
+        ИИ-черновик (draft_text от Drafting-Assistant), либо, если черновика
+        нет, статичный TODO-шаблон, коммитит и открывает PR. Возвращает URL PR."""
         base_branch = config.GIT_DEFAULT_BRANCH
         section_id = binding["section_id"]
         branch_name = f"docs-sync/patch-{section_id}"
@@ -71,8 +72,12 @@ class GitPRManager:
                 f"Секция id='{section_id}' не найдена в {path} — "
                 f"структура файла не совпадает с ожидаемой"
             )
-        todo = TODO_TEMPLATE.format(code_ref=binding["code_ref"])
-        new_raw = raw.replace(marker, todo + marker, 1)
+        insert_text = (draft_text or "").strip() or TODO_TEMPLATE.format(
+            code_ref=binding["code_ref"]
+        ).strip()
+        if not insert_text.endswith("\n"):
+            insert_text += "\n"
+        new_raw = raw.replace(marker, insert_text + marker, 1)
 
         self._repo.update_file(
             path=path,
@@ -88,8 +93,9 @@ class GitPRManager:
             f"- **Документ:** `{path}`\n"
             f"- **Раздел:** `{section_id}`\n"
             f"- **Устаревший code_ref:** `{binding['code_ref']}`\n\n"
-            f"В раздел вставлен TODO-комментарий. Доработайте текст и "
-            f"смержите вручную."
+            f"**Черновик правки от Drafting-Assistant:**\n\n"
+            f"```\n{insert_text.strip()}\n```\n\n"
+            f"Доработайте текст и смержите вручную."
         )
         try:
             pr = self._repo.create_pull(
