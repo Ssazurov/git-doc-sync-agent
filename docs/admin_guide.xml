@@ -4,7 +4,8 @@
     
     <chapter id="configuration">
         <title>Конфигурирование системы</title>
-        <section id="config_params" code_ref="config.py::load_dotenv">
+        <!-- TODO(doc-sync): раздел устарел — code_ref 'config.py::load_dotenv' изменён или удалён из кода. Актуализируйте текст ниже. -->
+<section id="config_params" code_ref="config.py::load_dotenv">
             <title>Управление параметрами через .env</title>
             <para>Администратор может управлять поведением ИИ-агентов без изменения кода, настраивая файл .env.</para>
         </section>
