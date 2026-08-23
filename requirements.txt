@@ -2,3 +2,4 @@ lxml
 httpx
 python-dotenv
 streamlit
+PyGithub

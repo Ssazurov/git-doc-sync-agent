@@ -10,6 +10,8 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import config
 from detector import DocSyncDetector
+from github_reporter import GithubReporter
+from git_pr_manager import GitPRManager
 
 # Настройка страницы
 st.set_page_config(
@@ -81,7 +83,7 @@ with col2:
             detector = DocSyncDetector()
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            results = loop.run_until_loop(detector.analyze_sync())
+            results = loop.run_until_complete(detector.analyze_sync())
             st.session_state.scan_results = results
             st.success("Сканирование успешно завершено!")
             st.rerun()
@@ -125,10 +127,20 @@ if st.session_state.scan_results:
                 c_btn1, c_btn2 = st.columns(2)
                 with c_btn1:
                     if st.button(f"Создать ветку с разметкой TODO для {binding['section_id']}", key=f"todo_{binding['section_id']}"):
-                        st.info(f"Создана ветка `docs-sync/fix-{binding['section_id']}`. Pull Request открыт в репозитории Ssazurov!")
+                        try:
+                            pr_manager = GitPRManager()
+                            pr_url = pr_manager.create_todo_pr(binding)
+                            st.success(f"PR открыт: {pr_url}")
+                        except Exception as e:
+                            st.error(f"Ошибка создания PR: {e}")
                 with c_btn2:
                     if st.button(f"Создать задачу в GitHub Issues", key=f"issue_{binding['section_id']}"):
-                        st.warning(f"В репозитории Ssazurov заведена задача по актуализации раздела '{binding['section_title']}'!")
+                        try:
+                            reporter = GithubReporter()
+                            url = reporter.create_stale_issue(binding)
+                            st.success(f"Issue создан: {url}")
+                        except Exception as e:
+                            st.error(f"Ошибка создания Issue: {e}")
                 st.markdown("---")
                 
     with tab2:
@@ -153,7 +165,7 @@ if st.session_state.scan_results:
                 else:
                     st.info("💡 **Рекомендация ИИ:** Релевантных разделов в документации не найдено. Рекомендуется создать новый раздел.")
                 
-                if st.button(f"Авто-разметка code_ref для {item['method_name']}", key=f"bind_{item['method_name']}"):
+                if st.button(f"Авто-разметка code_ref для {item['method_name']}", key=f"bind_{item['code_ref']}"):
                     st.success(f"Тег `code_ref='{item['code_ref']}'` успешно подготовлен для вставки!")
                 st.markdown("---")
                 

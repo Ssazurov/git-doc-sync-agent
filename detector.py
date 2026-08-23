@@ -43,7 +43,9 @@ class DocSyncDetector:
     def scan_codebase(self) -> dict[str, dict]:
         """Сканирует всю папку с кодом и индексирует методы"""
         all_methods = {}
-        for root, _, files in os.walk(self.codes_dir):
+        EXCLUDE_DIRS = {".venv", "venv", "__pycache__", ".git", "node_modules", ".idea", ".pytest_cache", "db"}
+        for root, dirs, files in os.walk(self.codes_dir):
+            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS]
             for file in files:
                 if file.endswith(".py") and not file.startswith("test_") and file != "config.py":
                     path = os.path.join(root, file)
@@ -90,8 +92,18 @@ class DocSyncDetector:
                 all_bindings.extend(self.scan_docbook_xml(os.path.join(self.docs_dir, file)))
         return all_bindings
 
+    _embed_cache: dict = {}
+
+    async def _get_embedding(self, client: httpx.AsyncClient, url: str, text: str) -> list:
+        if text in self._embed_cache:
+            return self._embed_cache[text]
+        r = await client.post(url, json={"model": config.OLLAMA_EMBED_MODEL, "prompt": text})
+        v = r.json()["embedding"]
+        self._embed_cache[text] = v
+        return v
+
     async def calculate_semantic_similarity(self, text1: str, text2: str) -> float:
-        """Запрашивает эмбеддинги через Ollama и вычисляет косинусное сходство"""
+        """Запрашивает эмбеддинги через Ollama (с кэшем) и вычисляет косинусное сходство"""
         if config.EMBED_PROVIDER == "openai":
             # Заглушка для OpenAI API
             return 0.5
@@ -99,12 +111,8 @@ class DocSyncDetector:
         url = f"{config.OLLAMA_HOST}/api/embeddings"
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                # Получаем вектор 1
-                r1 = await client.post(url, json={"model": config.OLLAMA_EMBED_MODEL, "prompt": text1})
-                v1 = r1.json()["embedding"]
-                # Получаем вектор 2
-                r2 = await client.post(url, json={"model": config.OLLAMA_EMBED_MODEL, "prompt": text2})
-                v2 = r2.json()["embedding"]
+                v1 = await self._get_embedding(client, url, text1)
+                v2 = await self._get_embedding(client, url, text2)
                 
                 # Косинусное сходство (dot product / magnitudes)
                 dot_product = sum(a*b for a, b in zip(v1, v2))
