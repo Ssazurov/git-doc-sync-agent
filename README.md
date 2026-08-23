@@ -119,3 +119,12 @@ streamlit run streamlit_app.py   # интерактивный портал те�
 ## Лицензия
 
 См. [`LICENSE.md`](LICENSE.md).
+
+
+<img width="2560" height="1372" alt="image" src="https://github.com/user-attachments/assets/e1f60fc9-02e3-4e84-a2a6-3ef9950709f7" />
+
+<img width="2560" height="1372" alt="image" src="https://github.com/user-attachments/assets/2f7ee914-4980-4f97-8ed1-9ba1c2e73577" />
+
+<img width="2560" height="1372" alt="image" src="https://github.com/user-attachments/assets/5f52ca9d-cfd3-4617-8536-58456a72c88a" />
+
+<img width="2560" height="1372" alt="image" src="https://github.com/user-attachments/assets/646a807a-7b24-4e69-bd4b-36aef8f36f9f" />
