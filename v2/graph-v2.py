@@ -136,33 +136,33 @@ async def node_xml_navigate(state: AgentState) -> Dict[str, Any]:
 
 
 async def node_ai_draft_writer(state: AgentState) -> Dict[str, Any]:
-    """Нода 3 (Drafting-Assistant): ИИ генерирует TODO-комментарии и XML-патчи"""
+    """Нода 3 (Drafting-Assistant, Issue #9): реальный вызов Ollama/Qwen2.5
+    (generate_draft — /api/generate, structured output {draft_text,
+    confidence}, retry + fallback на TODO при ошибке/недоступности LLM)."""
     print("[Node 3]: Drafting-Assistant пишет ИИ-черновики правок...")
     drafts = {}
     writer = DraftingAssistantAgent()
+    navigator = XMLNavigatorAgent()
 
     for item in state["stale_bindings"]:
         binding = item["binding"]
         method_name = binding["code_ref"]
-        summary = f"Был изменен метод {method_name}."
+        diff = f"Метод '{method_name}' изменён или удалён из кода."
 
-        todo_comment = await writer.generate_xml_todo(
-            section_title=binding["section_title"],
-            method_name=method_name,
-            changes_summary=summary,
-        )
+        current_xml = ""
+        doc_path = os.path.join(config.DOCS_DIR, binding["doc_file"])
+        if os.path.exists(doc_path):
+            with open(doc_path, "r", encoding="utf-8") as f:
+                current_xml = navigator.extract_section_xml(f.read(), binding["section_id"])
+
+        result = await writer.generate_draft(method_name, current_xml, diff)
 
         drafts[binding["section_id"]] = {
             "section_title": binding["section_title"],
             "doc_file": binding["doc_file"],
-            "todo_comment": todo_comment,
-            "proposed_xml": (
-                f'  <section id="{binding["section_id"]}" code_ref="{method_name}">\n'
-                f'    <title>{binding["section_title"]}</title>\n'
-                f'    {todo_comment}\n'
-                f'    <para>Автоматически подготовленное описание изменений в {method_name}...</para>\n'
-                f'  </section>'
-            ),
+            "draft_text": result["draft_text"],
+            "confidence": result["confidence"],
+            "fallback": result["fallback"],
         }
 
     return {"ai_drafts": drafts, "current_step": "ai_draft_writer"}
@@ -196,7 +196,8 @@ async def node_devops_coordinator(state: AgentState) -> Dict[str, Any]:
 **Устаревшие разделы обновлены нашими ИИ-агентами:**
 """
     for sec_id, draft in state["ai_drafts"].items():
-        pr_body += f"\n*   **Файл:** `{draft['doc_file']}` -> Раздел: `\\\"{draft['section_title']}\\\"` (Добавлены TODO-комментарии)"
+        note = " (fallback: LLM недоступна)" if draft.get("fallback") else f" (confidence={draft.get('confidence', 0.0):.2f})"
+        pr_body += f"\n*   **Файл:** `{draft['doc_file']}` -> Раздел: `\\\"{draft['section_title']}\\\"`{note}"
 
     return {
         "github_issue_body": issue_body,
