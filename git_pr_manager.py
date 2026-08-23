@@ -5,8 +5,11 @@ Request — всё через GitHub Contents/Git API (PyGithub), без лок�
 git-клиента.
 """
 import base64
+import asyncio
 from github import Github, GithubException
+from lxml import etree
 import config
+from drafting_assistant import DraftingAssistant
 
 TODO_TEMPLATE = (
     "<!-- TODO(doc-sync): раздел устарел — code_ref '{code_ref}' "
@@ -98,6 +101,90 @@ class GitPRManager:
         except GithubException as e:
             if e.status == 422:
                 # PR из этой ветки уже существует — найдём и вернём его
+                existing = self._repo.get_pulls(
+                    state="open", head=f"{self._repo.owner.login}:{branch_name}"
+                )
+                for p in existing:
+                    return p.html_url
+            raise RuntimeError(f"Не удалось открыть PR: {e}") from e
+        return pr.html_url
+
+    def _extract_section_xml(self, raw: str, section_id: str) -> str:
+        """Достаёт текущий текст <section id=...> для промпта Drafting-Assistant."""
+        try:
+            parser = etree.XMLParser(remove_blank_text=True)
+            tree = etree.fromstring(raw.encode("utf-8"), parser)
+            sec = tree.xpath(f'//section[@id="{section_id}"]')
+            if sec:
+                return etree.tostring(sec[0], pretty_print=True, encoding="unicode")
+        except Exception:
+            pass
+        return ""
+
+    def create_draft_pr(self, binding: dict) -> str:
+        """v2 (Issue #9): как create_todo_pr, но вместо статичного TODO
+        вставляет AI-черновик от DraftingAssistant (Ollama/Qwen2.5).
+        При недоступности/ошибке LLM — тот же TODO-шаблон (fallback)."""
+        base_branch = config.GIT_DEFAULT_BRANCH
+        section_id = binding["section_id"]
+        branch_name = f"docs-sync/patch-{section_id}"
+
+        base_ref = self._repo.get_git_ref(f"heads/{base_branch}")
+        base_sha = base_ref.object.sha
+        try:
+            self._repo.create_git_ref(f"refs/heads/{branch_name}", base_sha)
+        except GithubException as e:
+            if e.status != 422:
+                raise RuntimeError(f"Не удалось создать ветку: {e}") from e
+
+        path, file_content = self._get_file(binding["doc_file"], ref=branch_name)
+        raw = base64.b64decode(file_content.content).decode("utf-8")
+
+        marker = f'<section id="{section_id}"'
+        if marker not in raw:
+            raise RuntimeError(
+                f"Секция id='{section_id}' не найдена в {path} — "
+                f"структура файла не совпадает с ожидаемой"
+            )
+
+        section_xml = self._extract_section_xml(raw, section_id)
+        result = asyncio.run(DraftingAssistant().generate_draft(binding, section_xml))
+        if result["fallback"]:
+            comment = result["draft_text"]
+        else:
+            comment = (
+                f"<!-- doc-sync AI-draft (confidence={result['confidence']:.2f}, "
+                f"model={config.OLLAMA_MODEL}), требует проверки техписателем:\n"
+                f"{result['draft_text']}\n-->\n"
+            )
+        new_raw = raw.replace(marker, comment + marker, 1)
+
+        self._repo.update_file(
+            path=path,
+            message=f"docs: AI-черновик по устаревшему разделу '{binding['section_title']}'",
+            content=new_raw,
+            sha=file_content.sha,
+            branch=branch_name,
+        )
+
+        pr_title = f"[Doc-sync] Draft: {binding['section_title']}"
+        pr_body = (
+            f"Автоматически сгенерировано git-doc-sync-agent "
+            f"(Drafting-Assistant v2).\n\n"
+            f"- **Документ:** `{path}`\n"
+            f"- **Раздел:** `{section_id}`\n"
+            f"- **Устаревший code_ref:** `{binding['code_ref']}`\n"
+            f"- **Confidence:** `{result['confidence']:.2f}`"
+            f"{' (fallback: LLM недоступна)' if result['fallback'] else ''}\n\n"
+            f"В раздел вставлен AI-черновик комментарием. Проверьте и "
+            f"смержите вручную.\n\nCloses #9"
+        )
+        try:
+            pr = self._repo.create_pull(
+                title=pr_title, body=pr_body, head=branch_name, base=base_branch
+            )
+        except GithubException as e:
+            if e.status == 422:
                 existing = self._repo.get_pulls(
                     state="open", head=f"{self._repo.owner.login}:{branch_name}"
                 )

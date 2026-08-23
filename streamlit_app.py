@@ -124,7 +124,7 @@ if st.session_state.scan_results:
                 commit_hash = "a1b2c3"
                 st.markdown(f"🔗 **[Просмотреть изменения в коммите #{commit_hash} на GitHub](https://github.com/{config.GITHUB_REPO}/commit/{commit_hash})**")
                 
-                c_btn1, c_btn2 = st.columns(2)
+                c_btn1, c_btn2, c_btn3 = st.columns(3)
                 with c_btn1:
                     if st.button(f"Создать ветку с разметкой TODO для {binding['section_id']}", key=f"todo_{binding['section_id']}"):
                         try:
@@ -141,6 +141,15 @@ if st.session_state.scan_results:
                             st.success(f"Issue создан: {url}")
                         except Exception as e:
                             st.error(f"Ошибка создания Issue: {e}")
+                with c_btn3:
+                    if st.button(f"Сгенерировать AI-черновик (Ollama)", key=f"draft_{binding['section_id']}"):
+                        try:
+                            pr_manager = GitPRManager()
+                            with st.spinner("Запрос к Ollama/Qwen2.5..."):
+                                pr_url = pr_manager.create_draft_pr(binding)
+                            st.success(f"PR с AI-черновиком открыт: {pr_url}")
+                        except Exception as e:
+                            st.error(f"Ошибка создания PR: {e}")
                 st.markdown("---")
                 
     with tab2:
