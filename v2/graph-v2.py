@@ -19,6 +19,7 @@ class AgentState(TypedDict, total=False):
     changed_methods: List[Dict[str, Any]]
     stale_bindings: List[Dict[str, Any]]
     new_code_methods: List[Dict[str, Any]]
+    needs_llm_review: bool
     ai_drafts: Dict[str, Any]
     approved_by_human: bool
     github_issue_body: str
@@ -36,6 +37,7 @@ def initial_state(**overrides: Any) -> AgentState:
         "changed_methods": [],
         "stale_bindings": [],
         "new_code_methods": [],
+        "needs_llm_review": False,
         "ai_drafts": {},
         "approved_by_human": False,
         "github_issue_body": "",
@@ -74,37 +76,61 @@ async def node_ast_detect(state: AgentState) -> Dict[str, Any]:
 
 
 async def node_xml_navigate(state: AgentState) -> Dict[str, Any]:
-    """Нода 2 (XML-Navigator): проверяет привязку по code_ref в XML"""
+    """Нода 2 (XML-Navigator): детерминированное сопоставление по code_ref (как в v1).
+
+    Без LLM: 1) изменённые методы, уже привязанные к <section code_ref=...>,
+    помечаются как stale_bindings (нужно обновить XML). 2) Изменённые методы
+    без привязки сопоставляются с заголовками разделов через косинусное
+    сходство эмбеддингов (detector.calculate_semantic_similarity); если лучший
+    результат <70%, выставляется needs_llm_review=True — сигнал для
+    Drafting-Assistant, что нужен LLM, а не автопривязка."""
     print("[Node 2]: XML-Navigator сопоставляет код с документацией...")
     detector = DocSyncDetector()
-    stale_bindings = []
-    new_code_methods = []
-
     bindings = detector.scan_all_docs()
-    changed_signatures = {m["signature"] for m in state["changed_methods"]}
+    documented_refs = {b["code_ref"] for b in bindings}
+    changed_by_ref = {m["signature"]: m for m in state["changed_methods"]}
 
+    stale_bindings = []
     for binding in bindings:
-        if binding["code_ref"] in changed_signatures:
+        if binding["code_ref"] in changed_by_ref:
             stale_bindings.append({
                 "binding": binding,
                 "reason": "Метод изменен. Требуется обновление XML-раздела.",
             })
 
-    if not stale_bindings:
-        stale_bindings.append({
-            "binding": {
-                "doc_file": "installation_guide.xml",
-                "section_id": "install_server",
-                "section_title": "Процедура запуска сервера",
-                "code_ref": "app.py::start_server",
-                "xpath": "/book/chapter/section[1]",
-            },
-            "reason": "Метод start_server() был модифицирован в коммите.",
+    new_code_methods = []
+    needs_llm_review = False
+    for ref, method in changed_by_ref.items():
+        if ref in documented_refs:
+            continue  # уже обработан выше как stale_binding
+
+        best_binding = None
+        best_score = 0.0
+        for binding in bindings:
+            score = await detector.calculate_semantic_similarity(
+                f"{method['name']} {method['docstring']}",
+                binding["section_title"],
+            )
+            if score > best_score:
+                best_score = score
+                best_binding = binding
+
+        item_needs_review = best_score < 0.7
+        needs_llm_review = needs_llm_review or item_needs_review
+
+        new_code_methods.append({
+            "code_ref": ref,
+            "file": method["file"],
+            "method_name": method["name"],
+            "suggested_binding": best_binding,
+            "match_score": best_score,
+            "needs_llm_review": item_needs_review,
         })
 
     return {
         "stale_bindings": stale_bindings,
         "new_code_methods": new_code_methods,
+        "needs_llm_review": needs_llm_review,
         "current_step": "xml_navigate",
     }
 
