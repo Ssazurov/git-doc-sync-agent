@@ -1,5 +1,8 @@
 lxml
 httpx
+langgraph
 python-dotenv
 streamlit
 PyGithub
+tree-sitter
+tree-sitter-language-pack
