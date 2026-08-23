@@ -1,0 +1,22 @@
+# Windows Zone.Identifier (файлы, скачанные через браузер)
+*Zone.Identifier
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

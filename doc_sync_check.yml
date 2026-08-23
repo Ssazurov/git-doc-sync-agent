@@ -1,0 +1,27 @@
+name: Doc-as-Code Compliance Check
+
+on:
+  push:
+    branches: [ main ]  # Запуск при каждом пуше в ветку main
+
+jobs:
+  compliance-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install lxml httpx python-dotenv
+
+      - name: Run Sync Detector
+        run: |
+          python detector.py
+        env:
+          OLLAMA_HOST: ${{ secrets.OLLAMA_HOST }} # Если Ollama крутится в облаке
