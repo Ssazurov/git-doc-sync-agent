@@ -12,6 +12,7 @@ import config
 from detector import DocSyncDetector
 from github_reporter import GithubReporter
 from git_pr_manager import GitPRManager
+from graph import build_workflow, initial_state
 
 # Настройка страницы
 st.set_page_config(
@@ -35,6 +36,14 @@ st.markdown("""
 # Инициализация сессии
 if "scan_results" not in st.session_state:
     st.session_state.scan_results = None
+if "hitl_thread_id" not in st.session_state:
+    st.session_state.hitl_thread_id = None
+if "hitl_workflow" not in st.session_state:
+    st.session_state.hitl_workflow = None
+if "hitl_state" not in st.session_state:
+    st.session_state.hitl_state = None  # снапшот состояния графа на паузе
+if "hitl_result" not in st.session_state:
+    st.session_state.hitl_result = None  # финальный state после resume
 
 # --- БОКОВАЯ ПАНЕЛЬ ---
 with st.sidebar:
@@ -180,3 +189,98 @@ if st.session_state.scan_results:
                         st.code(f.read(), language="xml")
 else:
     st.info("Нажмите кнопку 'Скан сейчас', чтобы запустить ИИ-синхронизатор!")
+
+# --- LANGGRAPH HITL (реальная пауза через checkpointer, без имитации) ---
+st.markdown("---")
+st.markdown("### 🔄 LangGraph: Human-in-the-Loop с реальной паузой")
+st.caption(
+    "Граф реально останавливается перед нодой human_review (interrupt_before) "
+    "и хранит состояние в checkpointer. Никакого time.sleep/флагов — резюм "
+    "идёт через graph.invoke(None, config) после update_state()."
+)
+
+
+def _run_async(coro):
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+hitl_col1, hitl_col2 = st.columns([3, 1])
+with hitl_col2:
+    if st.button("▶️ Запустить граф до паузы", use_container_width=True):
+        thread_id = f"streamlit-{os.urandom(4).hex()}"
+        workflow = build_workflow()
+        cfg = {"configurable": {"thread_id": thread_id}}
+        with st.spinner("Граф выполняет ast_detect → xml_navigate → ai_draft_writer..."):
+            _run_async(workflow.ainvoke(initial_state(), cfg))
+        st.session_state.hitl_workflow = workflow
+        st.session_state.hitl_thread_id = thread_id
+        st.session_state.hitl_result = None
+        st.rerun()
+
+if st.session_state.hitl_workflow is not None and st.session_state.hitl_result is None:
+    cfg = {"configurable": {"thread_id": st.session_state.hitl_thread_id}}
+    snapshot = st.session_state.hitl_workflow.get_state(cfg)
+    state = snapshot.values
+
+    st.markdown(f"**Граф на паузе перед нодой:** `{', '.join(snapshot.next) or 'human_review'}`")
+
+    if not state.get("stale_bindings"):
+        st.info("Устаревших разделов не найдено — одобрять нечего.")
+    else:
+        edited_drafts = {}
+        for item in state["stale_bindings"]:
+            binding = item["binding"]
+            section_id = binding["section_id"]
+            draft = state.get("ai_drafts", {}).get(section_id, {})
+            st.markdown(f"**Раздел:** `{section_id}` — {binding['section_title']}")
+            edited_text = st.text_area(
+                "Черновик правки (можно отредактировать перед одобрением)",
+                value=draft.get("draft_text", ""),
+                key=f"hitl_draft_{section_id}",
+                height=120,
+            )
+            edited_drafts[section_id] = {**draft, "draft_text": edited_text}
+            st.markdown("---")
+
+        approve_col, reject_col = st.columns(2)
+        with approve_col:
+            if st.button("✅ Одобрить и продолжить граф (resume)", use_container_width=True):
+                st.session_state.hitl_workflow.update_state(
+                    cfg,
+                    {"ai_drafts": edited_drafts, "approved_by_human": True},
+                )
+                with st.spinner("Резюм графа: devops_coordinator создаёт PR..."):
+                    result = _run_async(st.session_state.hitl_workflow.ainvoke(None, cfg))
+                st.session_state.hitl_result = result
+                st.rerun()
+        with reject_col:
+            if st.button("🚫 Отклонить (граф завершится без PR)", use_container_width=True):
+                st.session_state.hitl_workflow.update_state(
+                    cfg, {"approved_by_human": False}
+                )
+                with st.spinner("Резюм графа..."):
+                    result = _run_async(st.session_state.hitl_workflow.ainvoke(None, cfg))
+                st.session_state.hitl_result = result
+                st.rerun()
+
+if st.session_state.hitl_result is not None:
+    result = st.session_state.hitl_result
+    st.success("Граф завершён (END).")
+    if result.get("created_prs"):
+        for pr in result["created_prs"]:
+            if "pr_url" in pr:
+                st.markdown(f"🔗 [PR: {pr['section_title']}]({pr['pr_url']})")
+            else:
+                st.error(f"{pr.get('section_id', '?')}: {pr.get('error')}")
+    else:
+        st.info("PR не создавались (отклонено человеком или нет stale_bindings).")
+    if st.button("🔄 Сбросить HITL-сессию"):
+        st.session_state.hitl_workflow = None
+        st.session_state.hitl_thread_id = None
+        st.session_state.hitl_result = None
+        st.rerun()
