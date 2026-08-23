@@ -10,6 +10,7 @@ from langgraph.checkpoint.memory import MemorySaver
 import config_sync as config
 from detector import DocSyncDetector
 from agents import ASTDetectiveAgent, XMLNavigatorAgent, DraftingAssistantAgent, DevOpsCoordinatorAgent
+from git_pr_manager import GitPRManager
 
 
 # --- СОСТОЯНИЕ ГРАФА (реальный LangGraph StateGraph) ---
@@ -23,7 +24,7 @@ class AgentState(TypedDict, total=False):
     ai_drafts: Dict[str, Any]
     approved_by_human: bool
     github_issue_body: str
-    github_pr_body: str
+    created_prs: List[Dict[str, Any]]
     current_step: str
 
 
@@ -41,7 +42,7 @@ def initial_state(**overrides: Any) -> AgentState:
         "ai_drafts": {},
         "approved_by_human": False,
         "github_issue_body": "",
-        "github_pr_body": "",
+        "created_prs": [],
         "current_step": "start",
     }
     state.update(overrides)
@@ -183,25 +184,54 @@ def route_after_human_review(state: AgentState) -> str:
 
 
 async def node_devops_coordinator(state: AgentState) -> Dict[str, Any]:
-    """Нода 4 (DevOps-Coordinator): формирует тексты для GitHub Issue и PR"""
-    print("[Node 4]: DevOps-Coordinator готовит отчеты для таск-трекера...")
+    """Нода 4 (DevOps-Coordinator, Issue #10): для каждого устаревшего
+    раздела реально вызывает GitPRManager.create_todo_pr() (PyGithub) —
+    создаёт ветку docs-sync/patch-<section_id>, коммитит в неё draft_text
+    от Drafting-Assistant вместо статичного TODO-шаблона и открывает
+    настоящий Pull Request. Никакой симуляции ветки/PR тут больше нет.
+    Отдельно, через LLM, готовится только текст GitHub Issue."""
+    print("[Node 4]: DevOps-Coordinator создаёт реальные ветки/коммиты/PR...")
     coordinator = DevOpsCoordinatorAgent()
-
     issue_body = await coordinator.generate_issue_body(state["stale_bindings"])
 
-    pr_body = f"""### 🤖 Автоматическое обновление документации (ИИ-Ассистент)
+    try:
+        pr_manager = GitPRManager()
+    except ValueError as e:
+        # GITHUB_TOKEN не задан — реальные PR создать нельзя
+        return {
+            "github_issue_body": issue_body,
+            "created_prs": [{"error": str(e)}],
+            "current_step": "END",
+        }
 
-Коммит: #{state["commit_hash"]}
+    created_prs: List[Dict[str, Any]] = []
+    for item in state["stale_bindings"]:
+        binding = item["binding"]
+        section_id = binding["section_id"]
+        draft = state["ai_drafts"].get(section_id)
+        draft_text = draft["draft_text"] if draft else None
 
-**Устаревшие разделы обновлены нашими ИИ-агентами:**
-"""
-    for sec_id, draft in state["ai_drafts"].items():
-        note = " (fallback: LLM недоступна)" if draft.get("fallback") else f" (confidence={draft.get('confidence', 0.0):.2f})"
-        pr_body += f"\n*   **Файл:** `{draft['doc_file']}` -> Раздел: `\\\"{draft['section_title']}\\\"`{note}"
+        try:
+            # PyGithub — блокирующий клиент, выносим вызов в отдельный поток
+            pr_url = await asyncio.to_thread(pr_manager.create_todo_pr, binding, draft_text)
+            created_prs.append({
+                "section_id": section_id,
+                "doc_file": binding["doc_file"],
+                "section_title": binding["section_title"],
+                "pr_url": pr_url,
+                "fallback": draft.get("fallback", True) if draft else True,
+            })
+        except Exception as e:
+            created_prs.append({
+                "section_id": section_id,
+                "doc_file": binding["doc_file"],
+                "section_title": binding["section_title"],
+                "error": str(e),
+            })
 
     return {
         "github_issue_body": issue_body,
-        "github_pr_body": pr_body,
+        "created_prs": created_prs,
         "current_step": "END",
     }
 
